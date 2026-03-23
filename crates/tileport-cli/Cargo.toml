@@ -10,4 +10,6 @@ path = "src/main.rs"
 [dependencies]
 tileport-core = { path = "../tileport-core" }
 clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+libc = "0.2"

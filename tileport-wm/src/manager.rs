@@ -4,6 +4,7 @@
 //! processes them through the WorkspaceManager, and applies window
 //! transitions via the PlatformApi.
 
+use crate::ipc::{IpcMessage, IpcResponse};
 use crossbeam_channel::Receiver;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -169,9 +170,11 @@ pub fn shutdown(workspace_mgr: &WorkspaceManager, platform: &dyn PlatformApi) {
 /// This is the main function for the manager thread. It receives commands
 /// from the hotkey thread and AX events, processes them, and applies
 /// window transitions.
+#[allow(clippy::too_many_arguments)]
 pub fn manager_loop(
     hotkey_rx: Receiver<Command>,
     ax_rx: Receiver<AxEvent>,
+    ipc_rx: Receiver<IpcMessage>,
     platform: &dyn PlatformApi,
     config: &Config,
     screen: Rect,
@@ -236,6 +239,25 @@ pub fn manager_loop(
                     }
                     Err(_) => {
                         tracing::info!("AX event channel closed");
+                    }
+                }
+            }
+            recv(ipc_rx) -> msg => {
+                match msg {
+                    Ok((command, resp_tx)) => {
+                        tracing::debug!(?command, "received IPC command");
+                        if command == Command::Quit {
+                            // Send OK response before shutting down.
+                            let _ = resp_tx.send(IpcResponse::ok());
+                            shutdown(&workspace_mgr, platform);
+                            return;
+                        }
+                        process_command(&command, &mut workspace_mgr, platform);
+                        // Send response back -- don't block if receiver is gone.
+                        let _ = resp_tx.send(IpcResponse::ok());
+                    }
+                    Err(_) => {
+                        tracing::info!("IPC channel closed");
                     }
                 }
             }
@@ -517,6 +539,7 @@ mod tests {
         let config = test_config();
         let (hotkey_tx, hotkey_rx) = crossbeam_channel::bounded(16);
         let (_ax_tx, ax_rx) = crossbeam_channel::bounded::<AxEvent>(16);
+        let (_ipc_tx, ipc_rx) = crossbeam_channel::bounded::<IpcMessage>(16);
         let shutdown_flag = Arc::new(AtomicBool::new(false));
 
         let initial_windows = vec![WindowInfo {
@@ -532,6 +555,7 @@ mod tests {
         manager_loop(
             hotkey_rx,
             ax_rx,
+            ipc_rx,
             &platform,
             &config,
             screen(),
@@ -550,11 +574,13 @@ mod tests {
         let config = test_config();
         let (_hotkey_tx, hotkey_rx) = crossbeam_channel::bounded(16);
         let (_ax_tx, ax_rx) = crossbeam_channel::bounded::<AxEvent>(16);
+        let (_ipc_tx, ipc_rx) = crossbeam_channel::bounded::<IpcMessage>(16);
         let shutdown_flag = Arc::new(AtomicBool::new(true)); // Already set.
 
         manager_loop(
             hotkey_rx,
             ax_rx,
+            ipc_rx,
             &platform,
             &config,
             screen(),
@@ -563,6 +589,81 @@ mod tests {
         );
 
         // Should exit immediately due to shutdown flag.
+    }
+
+    #[test]
+    fn test_manager_loop_ipc_quit() {
+        let platform = MockPlatform::new();
+        let config = test_config();
+        let (_hotkey_tx, hotkey_rx) = crossbeam_channel::bounded(16);
+        let (_ax_tx, ax_rx) = crossbeam_channel::bounded::<AxEvent>(16);
+        let (ipc_tx, ipc_rx) = crossbeam_channel::bounded::<IpcMessage>(16);
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
+
+        // Send quit command via IPC.
+        let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+        ipc_tx.send((Command::Quit, resp_tx)).unwrap();
+
+        manager_loop(
+            hotkey_rx,
+            ax_rx,
+            ipc_rx,
+            &platform,
+            &config,
+            screen(),
+            vec![],
+            shutdown_flag,
+        );
+
+        // Response should be OK.
+        let resp = resp_rx.blocking_recv().unwrap();
+        assert_eq!(resp, IpcResponse::ok());
+    }
+
+    #[test]
+    fn test_manager_loop_ipc_command() {
+        let platform = MockPlatform::new();
+        let config = test_config();
+        let (_hotkey_tx, hotkey_rx) = crossbeam_channel::bounded(16);
+        let (_ax_tx, ax_rx) = crossbeam_channel::bounded::<AxEvent>(16);
+        let (ipc_tx, ipc_rx) = crossbeam_channel::bounded::<IpcMessage>(16);
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
+
+        let initial_windows = vec![
+            WindowInfo {
+                window_id: wid(1),
+                app_id: "com.test".into(),
+                title: "Test 1".into(),
+                pid: 1,
+            },
+            WindowInfo {
+                window_id: wid(2),
+                app_id: "com.test".into(),
+                title: "Test 2".into(),
+                pid: 1,
+            },
+        ];
+
+        // Send focus_next via IPC, then quit via IPC.
+        let (resp_tx1, resp_rx1) = tokio::sync::oneshot::channel();
+        ipc_tx.send((Command::FocusNext, resp_tx1)).unwrap();
+        let (resp_tx2, _resp_rx2) = tokio::sync::oneshot::channel();
+        ipc_tx.send((Command::Quit, resp_tx2)).unwrap();
+
+        manager_loop(
+            hotkey_rx,
+            ax_rx,
+            ipc_rx,
+            &platform,
+            &config,
+            screen(),
+            initial_windows,
+            shutdown_flag,
+        );
+
+        // First response should be OK.
+        let resp = resp_rx1.blocking_recv().unwrap();
+        assert_eq!(resp, IpcResponse::ok());
     }
 
     #[test]

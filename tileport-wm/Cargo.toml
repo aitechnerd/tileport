@@ -11,7 +11,9 @@ path = "src/main.rs"
 tileport-core = { path = "../crates/tileport-core" }
 tileport-macos = { path = "../crates/tileport-macos" }
 crossbeam-channel = "0.5"
-tokio = { version = "1", features = ["rt", "net", "io-util", "sync"] }
+tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "time", "macros"] }
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 directories = "5"

@@ -12,6 +12,7 @@
 //! 9. Spawn hotkey thread
 //! 10. Run NSApplication on main thread
 
+mod ipc;
 mod manager;
 
 use anyhow::Result;
@@ -32,9 +33,9 @@ fn main() -> Result<()> {
 
     tracing::info!("tileport-wm starting");
 
-    // 2. Load config (Phase 4: use defaults; Phase 5 adds TOML loading).
-    let config = Config::default();
-    tracing::info!(gaps = ?config.gaps, "config loaded (using defaults)");
+    // 2. Load config from file, with XDG fallback and hardcoded defaults.
+    let config = load_config();
+    tracing::info!(gaps = ?config.gaps, "config loaded");
 
     // 3. Check permissions -- exit with error if missing (AC-16).
     tileport_macos::permission::ensure_permissions()?;
@@ -66,8 +67,10 @@ fn main() -> Result<()> {
     // 6. Create crossbeam channels.
     //    hotkey_tx/rx: hotkey thread -> manager (bounded to prevent backpressure issues).
     //    ax_tx/rx: AX events -> manager (future: from AXObserver or polling).
+    //    ipc_tx/rx: IPC thread -> manager (carries command + response channel).
     let (hotkey_tx, hotkey_rx) = bounded(64);
     let (_ax_tx, ax_rx) = bounded::<manager::AxEvent>(64);
+    let (ipc_tx, ipc_rx) = bounded::<ipc::IpcMessage>(64);
 
     // 7. Set up signal handler: SIGINT/SIGTERM -> set AtomicBool flag.
     //    DevSecOps requirement: only set an atomic flag in the handler.
@@ -86,6 +89,7 @@ fn main() -> Result<()> {
             manager::manager_loop(
                 hotkey_rx,
                 ax_rx,
+                ipc_rx,
                 &platform,
                 &manager_config,
                 screen,
@@ -93,6 +97,11 @@ fn main() -> Result<()> {
                 manager_shutdown,
             );
         })?;
+
+    // 8b. Spawn IPC thread (Unix socket server).
+    let ipc_shutdown = Arc::clone(&shutdown_flag);
+    let _ipc_handle = ipc::start_ipc_thread(ipc_tx, ipc_shutdown);
+    tracing::info!("IPC thread spawned");
 
     // 9. Spawn hotkey thread.
     let _hotkey_handle =
@@ -110,6 +119,67 @@ fn main() -> Result<()> {
 
     tracing::info!("tileport-wm exiting");
     Ok(())
+}
+
+/// Load configuration with the following priority:
+/// 1. `~/.config/tileport/tileport.toml` (explicit path)
+/// 2. XDG config dir via `directories` crate (ProjectDirs)
+/// 3. Hardcoded defaults (AC-15)
+///
+/// If the file exists but has parse errors, logs a warning and falls back to defaults.
+fn load_config() -> Config {
+    use directories::ProjectDirs;
+
+    // Try ~/.config/tileport/tileport.toml first.
+    let explicit_path = dirs_config_path();
+    if let Some(path) = &explicit_path {
+        if path.exists() {
+            match Config::load_from_file(path) {
+                Ok(config) => {
+                    tracing::info!(?path, "loaded config from file");
+                    return config;
+                }
+                Err(e) => {
+                    tracing::warn!(?path, error = %e, "config file has errors, using defaults");
+                    return Config::default();
+                }
+            }
+        }
+    }
+
+    // Try XDG config dir.
+    if let Some(proj_dirs) = ProjectDirs::from("", "", "tileport") {
+        let xdg_path = proj_dirs.config_dir().join("tileport.toml");
+        if xdg_path.exists() {
+            match Config::load_from_file(&xdg_path) {
+                Ok(config) => {
+                    tracing::info!(?xdg_path, "loaded config from XDG path");
+                    return config;
+                }
+                Err(e) => {
+                    tracing::warn!(?xdg_path, error = %e, "XDG config file has errors, using defaults");
+                    return Config::default();
+                }
+            }
+        }
+    }
+
+    tracing::info!("no config file found, using defaults");
+    Config::default()
+}
+
+/// Get the explicit config path: `~/.config/tileport/tileport.toml`.
+fn dirs_config_path() -> Option<std::path::PathBuf> {
+    dirs::home_dir().map(|h| h.join(".config").join("tileport").join("tileport.toml"))
+}
+
+/// Return the home directory.
+mod dirs {
+    use std::path::PathBuf;
+
+    pub fn home_dir() -> Option<PathBuf> {
+        std::env::var_os("HOME").map(PathBuf::from)
+    }
 }
 
 /// Start a minimal NSApplication run loop on the main thread.
