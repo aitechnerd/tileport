@@ -27,6 +27,18 @@ impl Default for Gaps {
     }
 }
 
+/// Tracked state for a managed window.
+#[derive(Debug)]
+pub struct WindowState {
+    pub id: WindowId,
+    pub app_id: String,
+    pub title: String,
+    pub is_floating: bool,
+    /// Remembered position when floating (NH-01: float position memory).
+    pub floating_rect: Option<Rect>,
+    pub is_fullscreen: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
