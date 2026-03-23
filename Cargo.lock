@@ -753,6 +753,7 @@ dependencies = [
 name = "tileport-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -768,8 +769,11 @@ dependencies = [
  "anyhow",
  "block2",
  "core-foundation",
+ "core-foundation-sys",
  "core-graphics",
+ "core-graphics-types",
  "crossbeam-channel",
+ "libc",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
