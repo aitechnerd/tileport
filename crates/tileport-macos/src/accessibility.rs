@@ -228,11 +228,11 @@ impl AXWindow {
 
     fn get_string_attribute(&self, attribute: &str) -> Result<String> {
         let value = self.get_attribute_value(attribute)?;
-        // SAFETY: The returned value should be a CFStringRef for string attributes.
-        // We wrap it as a CFString to get the Rust String, then it's released
-        // when the CFString is dropped.
+        // SAFETY: AXUIElementCopyAttributeValue returns a +1 retained CFTypeRef
+        // (Create rule). We use wrap_under_create_rule so the CFString takes
+        // ownership and releases the retain on drop, preventing a leak.
         let cf_string = unsafe {
-            CFString::wrap_under_get_rule(value as core_foundation::string::CFStringRef)
+            CFString::wrap_under_create_rule(value as core_foundation::string::CFStringRef)
         };
         Ok(cf_string.to_string())
     }

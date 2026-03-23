@@ -125,7 +125,11 @@ impl WorkspaceManager {
     }
 
     /// Reference to a workspace by 1-based number (1-9).
+    ///
+    /// # Panics
+    /// Panics if `number` is 0 or greater than 9.
     pub fn workspace(&self, number: u8) -> &Workspace {
+        assert!((1..=9).contains(&number), "workspace number must be 1-9, got {number}");
         &self.workspaces[(number - 1) as usize]
     }
 

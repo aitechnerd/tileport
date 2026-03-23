@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use tileport_core::command::Command;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 
 /// IPC response sent back to CLI clients.
@@ -154,7 +154,7 @@ pub fn start_ipc_thread(
                     // Handle one connection at a time (simple for MVP).
                     let cmd_tx = cmd_tx.clone();
                     let (reader, mut writer) = tokio::io::split(stream);
-                    let mut reader = BufReader::new(reader);
+                    let mut reader = BufReader::new(reader.take(4096));
                     let mut line = String::new();
 
                     match reader.read_line(&mut line).await {
