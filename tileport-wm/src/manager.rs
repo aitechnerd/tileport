@@ -6,6 +6,7 @@
 
 use crate::ipc::{IpcMessage, IpcResponse};
 use crossbeam_channel::Receiver;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,10 +16,12 @@ use tileport_core::platform::{PlatformApi, WindowInfo};
 use tileport_core::types::{Rect, WindowId};
 use tileport_core::workspace::{WorkspaceManager, WorkspaceTransition};
 
-/// Events from the AX observer or polling thread (window creation/destruction).
+/// Events from AX observers (window creation/destruction).
 ///
-/// Variants are constructed by the window polling thread and in tests.
+/// Currently constructed in tests and reserved for future AXObserver callbacks.
+/// Window polling is handled directly in the manager loop via `poll_windows()`.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum AxEvent {
     WindowCreated {
         id: WindowId,
@@ -178,6 +181,15 @@ pub trait WindowRegistry {
     ) {
     }
     fn unregister_ax_window(&mut self, _window_id: WindowId) {}
+
+    /// Enumerate windows and register their AX handles in one step.
+    ///
+    /// This combines enumeration with handle registration so that polling
+    /// can happen on the same thread that owns the platform state.
+    /// Returns only `WindowInfo` since handles are stored internally.
+    fn enumerate_and_register(&mut self) -> anyhow::Result<Vec<WindowInfo>> {
+        Ok(Vec::new())
+    }
 }
 
 impl WindowRegistry for tileport_macos::MacOSPlatform {
@@ -192,6 +204,74 @@ impl WindowRegistry for tileport_macos::MacOSPlatform {
     fn unregister_ax_window(&mut self, window_id: WindowId) {
         self.unregister_window(window_id);
     }
+
+    fn enumerate_and_register(&mut self) -> anyhow::Result<Vec<WindowInfo>> {
+        let results = tileport_macos::window::enumerate_windows()?;
+        let mut infos = Vec::with_capacity(results.len());
+        for (info, ax_window) in results {
+            self.register_window(info.window_id, ax_window);
+            infos.push(info);
+        }
+        Ok(infos)
+    }
+}
+
+/// Poll for window changes: enumerate current windows, diff against known set,
+/// and process creates/destroys.
+///
+/// This runs on the manager thread, which is safe for AX API calls because the
+/// manager thread owns the platform state. Previously this logic lived in a
+/// separate polling thread, which violated macOS AX API thread-safety requirements.
+fn poll_windows<P: PlatformApi + WindowRegistry>(
+    workspace_mgr: &mut WorkspaceManager,
+    platform: &mut P,
+    known_ids: &mut HashSet<WindowId>,
+) {
+    let current = match platform.enumerate_and_register() {
+        Ok(infos) => infos,
+        Err(e) => {
+            tracing::warn!(error = %e, "poll: enumerate_windows failed");
+            return;
+        }
+    };
+
+    let current_ids: HashSet<WindowId> = current.iter().map(|info| info.window_id).collect();
+
+    // Detect new windows (in current but not in known).
+    for info in &current {
+        if !known_ids.contains(&info.window_id) {
+            tracing::info!(id = ?info.window_id, app = %info.app_id, "poll: new window detected");
+            workspace_mgr.add_window(info.window_id);
+            let transition = workspace_mgr.recalculate_active();
+            apply_transition(platform, &transition);
+
+            if let Err(e) = platform.focus_window(info.window_id) {
+                tracing::warn!(id = ?info.window_id, error = %e, "failed to focus new window");
+            }
+        }
+    }
+
+    // Detect destroyed windows (in known but not in current).
+    let destroyed: Vec<WindowId> = known_ids
+        .iter()
+        .copied()
+        .filter(|id| !current_ids.contains(id))
+        .collect();
+    for id in &destroyed {
+        tracing::info!(?id, "poll: window destroyed");
+        platform.unregister_ax_window(*id);
+        workspace_mgr.remove_window(*id);
+        let transition = workspace_mgr.recalculate_active();
+        apply_transition(platform, &transition);
+
+        if let Some(focused_id) = workspace_mgr.active_workspace().monocle.focused() {
+            if let Err(e) = platform.focus_window(focused_id) {
+                tracing::warn!(?focused_id, error = %e, "failed to focus after destroy");
+            }
+        }
+    }
+
+    *known_ids = current_ids;
 }
 
 /// Run the manager loop until shutdown.
@@ -228,6 +308,17 @@ pub fn manager_loop<P: PlatformApi + WindowRegistry>(
             tracing::warn!(?id, error = %e, "failed to focus initial window");
         }
     }
+
+    // Build the initial set of known window IDs for polling diff.
+    let mut known_ids: HashSet<WindowId> = initial_windows.iter().map(|w| w.window_id).collect();
+
+    // Periodic timer for window polling (replaces the dedicated polling thread).
+    // Polling on the manager thread is required because macOS AX API calls must
+    // happen on the thread that owns the AX context.
+    let poll_ticker = crossbeam_channel::tick(Duration::from_secs(2));
+
+    // Periodic timer for shutdown flag checks (replaces the old default arm).
+    let shutdown_ticker = crossbeam_channel::tick(Duration::from_millis(250));
 
     tracing::info!(
         window_count = initial_windows.len(),
@@ -302,8 +393,10 @@ pub fn manager_loop<P: PlatformApi + WindowRegistry>(
                     }
                 }
             }
-            // Periodic check for shutdown flag (every 250ms).
-            default(Duration::from_millis(250)) => {
+            recv(poll_ticker) -> _ => {
+                poll_windows(&mut workspace_mgr, platform, &mut known_ids);
+            }
+            recv(shutdown_ticker) -> _ => {
                 if shutdown_flag.load(Ordering::Relaxed) {
                     tracing::info!("shutdown signal received (periodic check)");
                     shutdown(&workspace_mgr, platform);
@@ -323,6 +416,8 @@ mod tests {
     struct MockPlatform {
         move_calls: Mutex<Vec<(WindowId, Rect)>>,
         focus_calls: Mutex<Vec<WindowId>>,
+        /// Windows returned by `enumerate_and_register` (for poll testing).
+        poll_windows: Mutex<Vec<WindowInfo>>,
     }
 
     impl MockPlatform {
@@ -330,6 +425,7 @@ mod tests {
             Self {
                 move_calls: Mutex::new(Vec::new()),
                 focus_calls: Mutex::new(Vec::new()),
+                poll_windows: Mutex::new(Vec::new()),
             }
         }
 
@@ -345,9 +441,18 @@ mod tests {
             self.move_calls.lock().unwrap().clear();
             self.focus_calls.lock().unwrap().clear();
         }
+
+        /// Set the windows that will be returned by the next `enumerate_and_register` call.
+        fn set_poll_windows(&self, windows: Vec<WindowInfo>) {
+            *self.poll_windows.lock().unwrap() = windows;
+        }
     }
 
-    impl WindowRegistry for MockPlatform {}
+    impl WindowRegistry for MockPlatform {
+        fn enumerate_and_register(&mut self) -> anyhow::Result<Vec<WindowInfo>> {
+            Ok(self.poll_windows.lock().unwrap().clone())
+        }
+    }
 
     impl PlatformApi for MockPlatform {
         fn enumerate_windows(&self) -> anyhow::Result<Vec<WindowInfo>> {
@@ -742,10 +847,13 @@ mod tests {
         assert!(!ws.monocle.windows().contains(&wid(2)));
     }
 
-    /// Test that the manager loop processes window create/destroy events from
-    /// the ax_rx channel (simulating what the polling thread would send).
+    /// Test that the manager loop processes AX events from the ax_rx channel.
+    ///
+    /// Sends a WindowCreated event via ax_rx first, waits for it to be processed,
+    /// then sends Quit. This validates that the ax_rx channel (reserved for future
+    /// AXObserver callbacks) is still functional in the select loop.
     #[test]
-    fn test_manager_loop_ax_events_from_poll() {
+    fn test_manager_loop_ax_events() {
         let mut platform = MockPlatform::new();
         let config = test_config();
         let (_hotkey_tx, hotkey_rx) = crossbeam_channel::bounded(16);
@@ -760,7 +868,7 @@ mod tests {
             pid: 1,
         }];
 
-        // Simulate polling thread: new window created, then quit.
+        // Send window created event via ax_rx.
         ax_tx
             .send(AxEvent::WindowCreated {
                 id: wid(2),
@@ -770,20 +878,29 @@ mod tests {
             })
             .unwrap();
 
-        // Send quit via IPC after the ax event.
+        // Run manager_loop in a background thread so we can control timing.
+        let sf = Arc::clone(&shutdown_flag);
+        let handle = std::thread::spawn(move || {
+            manager_loop(
+                hotkey_rx,
+                ax_rx,
+                ipc_rx,
+                &mut platform,
+                &config,
+                screen(),
+                initial_windows,
+                sf,
+            );
+            platform
+        });
+
+        // Give the manager loop time to process the ax_event before sending quit.
+        std::thread::sleep(Duration::from_millis(100));
+
         let (resp_tx, _resp_rx) = tokio::sync::oneshot::channel();
         ipc_tx.send((Command::Quit, resp_tx)).unwrap();
 
-        manager_loop(
-            hotkey_rx,
-            ax_rx,
-            ipc_rx,
-            &mut platform,
-            &config,
-            screen(),
-            initial_windows,
-            shutdown_flag,
-        );
+        let platform = handle.join().unwrap();
 
         // Shutdown should have restored both windows (wid(1) and wid(2)).
         let moves = platform.move_calls();
@@ -794,7 +911,84 @@ mod tests {
         );
         assert!(
             restored_ids.contains(&wid(2)),
-            "poll-created window should be restored"
+            "ax-event window should be restored"
         );
+    }
+
+    #[test]
+    fn test_poll_windows_detects_new_window() {
+        let mut platform = MockPlatform::new();
+        let mut mgr = setup_manager_with_windows(&[1]);
+        let mut known_ids: HashSet<WindowId> = [wid(1)].into_iter().collect();
+
+        // Simulate a new window appearing.
+        platform.set_poll_windows(vec![
+            WindowInfo {
+                window_id: wid(1),
+                app_id: "com.test".into(),
+                title: "Existing".into(),
+                pid: 1,
+            },
+            WindowInfo {
+                window_id: wid(2),
+                app_id: "com.test.new".into(),
+                title: "New Window".into(),
+                pid: 2,
+            },
+        ]);
+
+        poll_windows(&mut mgr, &mut platform, &mut known_ids);
+
+        // wid(2) should have been added to the workspace.
+        assert_eq!(mgr.active_workspace().monocle.len(), 2);
+        assert!(known_ids.contains(&wid(2)));
+        // Should have focused the new window.
+        assert!(platform.focus_calls().contains(&wid(2)));
+    }
+
+    #[test]
+    fn test_poll_windows_detects_destroyed_window() {
+        let mut platform = MockPlatform::new();
+        let mut mgr = setup_manager_with_windows(&[1, 2]);
+        let mut known_ids: HashSet<WindowId> = [wid(1), wid(2)].into_iter().collect();
+        platform.clear();
+
+        // Simulate wid(2) being destroyed.
+        platform.set_poll_windows(vec![WindowInfo {
+            window_id: wid(1),
+            app_id: "com.test".into(),
+            title: "Remaining".into(),
+            pid: 1,
+        }]);
+
+        poll_windows(&mut mgr, &mut platform, &mut known_ids);
+
+        // wid(2) should have been removed.
+        assert_eq!(mgr.active_workspace().monocle.len(), 1);
+        assert!(!known_ids.contains(&wid(2)));
+        assert!(known_ids.contains(&wid(1)));
+    }
+
+    #[test]
+    fn test_poll_windows_no_changes() {
+        let mut platform = MockPlatform::new();
+        let mut mgr = setup_manager_with_windows(&[1]);
+        let mut known_ids: HashSet<WindowId> = [wid(1)].into_iter().collect();
+        platform.clear();
+
+        // Same window set, no changes.
+        platform.set_poll_windows(vec![WindowInfo {
+            window_id: wid(1),
+            app_id: "com.test".into(),
+            title: "Same".into(),
+            pid: 1,
+        }]);
+
+        poll_windows(&mut mgr, &mut platform, &mut known_ids);
+
+        // No new moves or focus calls (only from initial setup which we cleared).
+        assert!(platform.move_calls().is_empty());
+        assert!(platform.focus_calls().is_empty());
+        assert_eq!(mgr.active_workspace().monocle.len(), 1);
     }
 }

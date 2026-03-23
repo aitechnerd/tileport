@@ -16,12 +16,10 @@ mod ipc;
 mod manager;
 
 use anyhow::Result;
-use crossbeam_channel::{bounded, Sender};
-use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
+use crossbeam_channel::bounded;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tileport_core::config::Config;
-use tileport_core::types::WindowId;
 use tileport_macos::MacOSPlatform;
 
 fn main() -> Result<()> {
@@ -55,21 +53,20 @@ fn main() -> Result<()> {
     // Register AX windows with the platform for later move/focus calls.
     let mut platform = platform;
     let mut initial_windows = Vec::new();
-    let mut initial_window_ids = Vec::new();
     for (info, ax_window) in enumerated {
         tracing::info!(id = ?info.window_id, app = %info.app_id, "discovered window");
         tracing::debug!(id = ?info.window_id, title = %info.title, "window title");
         platform.register_window(info.window_id, ax_window);
-        initial_window_ids.push(info.window_id);
         initial_windows.push(info);
     }
 
     // 6. Create crossbeam channels.
     //    hotkey_tx/rx: hotkey thread -> manager (bounded to prevent backpressure issues).
-    //    ax_tx/rx: AX events -> manager (future: from AXObserver or polling).
+    //    ax_tx/rx: AX events -> manager (future: from AXObserver callbacks).
     //    ipc_tx/rx: IPC thread -> manager (carries command + response channel).
+    //    Note: window polling now happens directly in the manager thread (not via ax_tx).
     let (hotkey_tx, hotkey_rx) = bounded(64);
-    let (ax_tx, ax_rx) = bounded::<manager::AxEvent>(64);
+    let (_ax_tx, ax_rx) = bounded::<manager::AxEvent>(64);
     let (ipc_tx, ipc_rx) = bounded::<ipc::IpcMessage>(64);
 
     // 7. Set up signal handler: SIGINT/SIGTERM -> set AtomicBool flag.
@@ -98,18 +95,7 @@ fn main() -> Result<()> {
             );
         })?;
 
-    // 8b. Spawn window polling thread (detects new/destroyed windows).
-    let poll_shutdown = Arc::clone(&shutdown_flag);
-    let initial_ids: std::collections::HashSet<tileport_core::types::WindowId> =
-        initial_window_ids.iter().copied().collect();
-    let _poll_handle = std::thread::Builder::new()
-        .name("tileport-poll".into())
-        .spawn(move || {
-            window_poll_loop(ax_tx, poll_shutdown, initial_ids);
-        })?;
-    tracing::info!("window polling thread spawned");
-
-    // 8c. Spawn IPC thread (Unix socket server).
+    // 8b. Spawn IPC thread (Unix socket server).
     let ipc_shutdown = Arc::clone(&shutdown_flag);
     let _ipc_handle = ipc::start_ipc_thread(ipc_tx, ipc_shutdown);
     tracing::info!("IPC thread spawned");
@@ -130,79 +116,6 @@ fn main() -> Result<()> {
 
     tracing::info!("tileport-wm exiting");
     Ok(())
-}
-
-/// Poll for window creation/destruction every 2 seconds.
-///
-/// Calls `enumerate_windows()` to get the current set of on-screen windows,
-/// diffs against `known_ids`, and sends `AxEvent::WindowCreated` /
-/// `AxEvent::WindowDestroyed` events through `ax_tx`.
-fn window_poll_loop(
-    ax_tx: Sender<manager::AxEvent>,
-    shutdown_flag: Arc<AtomicBool>,
-    initial_ids: HashSet<WindowId>,
-) {
-    let mut known_ids = initial_ids;
-    let poll_interval = std::time::Duration::from_secs(2);
-
-    loop {
-        std::thread::sleep(poll_interval);
-
-        if shutdown_flag.load(Ordering::Relaxed) {
-            tracing::debug!("window poll thread shutting down");
-            return;
-        }
-
-        let current = match tileport_macos::window::enumerate_windows() {
-            Ok(windows) => windows,
-            Err(e) => {
-                tracing::warn!(error = %e, "window poll: enumerate_windows failed");
-                continue;
-            }
-        };
-
-        let mut current_ids = HashSet::new();
-        let mut current_map: std::collections::HashMap<
-            WindowId,
-            (tileport_core::platform::WindowInfo, tileport_macos::accessibility::AXWindow),
-        > = std::collections::HashMap::new();
-
-        for (info, ax_window) in current {
-            current_ids.insert(info.window_id);
-            current_map.insert(info.window_id, (info, ax_window));
-        }
-
-        // Detect new windows (in current but not in known).
-        for &id in &current_ids {
-            if !known_ids.contains(&id) {
-                if let Some((info, ax_window)) = current_map.remove(&id) {
-                    tracing::info!(?id, app = %info.app_id, "poll: new window detected");
-                    let event = manager::AxEvent::WindowCreated {
-                        id: info.window_id,
-                        app_id: info.app_id,
-                        title: info.title,
-                        ax_window: Some(ax_window),
-                    };
-                    if ax_tx.try_send(event).is_err() {
-                        tracing::warn!("window poll: ax_tx channel full or closed");
-                    }
-                }
-            }
-        }
-
-        // Detect destroyed windows (in known but not in current).
-        for &id in &known_ids {
-            if !current_ids.contains(&id) {
-                tracing::info!(?id, "poll: window destroyed");
-                let event = manager::AxEvent::WindowDestroyed { id };
-                if ax_tx.try_send(event).is_err() {
-                    tracing::warn!("window poll: ax_tx channel full or closed");
-                }
-            }
-        }
-
-        known_ids = current_ids;
-    }
 }
 
 /// Load configuration with the following priority:
