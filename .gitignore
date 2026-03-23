@@ -1,0 +1,10 @@
+# AI Dev Team (generated, per-project)
+.ai-team/
+.claude/stack.md
+.claude/project-context.md
+.claude/codemap.md
+.claude/settings.local.json
+.claude/agent-memory/
+.claude/agent-memory-local/
+.claude/ai-team.md
+.claude/settings.json
