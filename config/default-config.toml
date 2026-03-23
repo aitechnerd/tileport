@@ -1,0 +1,119 @@
+# tileport default configuration
+# Place your config at ~/.config/tileport/tileport.toml
+
+[gaps]
+inner = 8
+outer = 8
+
+# Keybindings (default: alt-based shortcuts)
+# If you override keybindings, you replace the entire set -- include all bindings you want.
+
+[[keybindings]]
+modifiers = ["alt"]
+key = "j"
+command = { command = "focus_next" }
+
+[[keybindings]]
+modifiers = ["alt"]
+key = "k"
+command = { command = "focus_prev" }
+
+[[keybindings]]
+modifiers = ["alt"]
+key = "f"
+command = { command = "toggle_fullscreen" }
+
+[[keybindings]]
+modifiers = ["alt", "shift"]
+key = "f"
+command = { command = "toggle_float" }
+
+[[keybindings]]
+modifiers = ["alt"]
+key = "1"
+command = { command = "switch_workspace", workspace = 1 }
+
+[[keybindings]]
+modifiers = ["alt"]
+key = "2"
+command = { command = "switch_workspace", workspace = 2 }
+
+[[keybindings]]
+modifiers = ["alt"]
+key = "3"
+command = { command = "switch_workspace", workspace = 3 }
+
+[[keybindings]]
+modifiers = ["alt"]
+key = "4"
+command = { command = "switch_workspace", workspace = 4 }
+
+[[keybindings]]
+modifiers = ["alt"]
+key = "5"
+command = { command = "switch_workspace", workspace = 5 }
+
+[[keybindings]]
+modifiers = ["alt"]
+key = "6"
+command = { command = "switch_workspace", workspace = 6 }
+
+[[keybindings]]
+modifiers = ["alt"]
+key = "7"
+command = { command = "switch_workspace", workspace = 7 }
+
+[[keybindings]]
+modifiers = ["alt"]
+key = "8"
+command = { command = "switch_workspace", workspace = 8 }
+
+[[keybindings]]
+modifiers = ["alt"]
+key = "9"
+command = { command = "switch_workspace", workspace = 9 }
+
+[[keybindings]]
+modifiers = ["alt", "shift"]
+key = "1"
+command = { command = "move_to_workspace", workspace = 1 }
+
+[[keybindings]]
+modifiers = ["alt", "shift"]
+key = "2"
+command = { command = "move_to_workspace", workspace = 2 }
+
+[[keybindings]]
+modifiers = ["alt", "shift"]
+key = "3"
+command = { command = "move_to_workspace", workspace = 3 }
+
+[[keybindings]]
+modifiers = ["alt", "shift"]
+key = "4"
+command = { command = "move_to_workspace", workspace = 4 }
+
+[[keybindings]]
+modifiers = ["alt", "shift"]
+key = "5"
+command = { command = "move_to_workspace", workspace = 5 }
+
+[[keybindings]]
+modifiers = ["alt", "shift"]
+key = "6"
+command = { command = "move_to_workspace", workspace = 6 }
+
+[[keybindings]]
+modifiers = ["alt", "shift"]
+key = "7"
+command = { command = "move_to_workspace", workspace = 7 }
+
+[[keybindings]]
+modifiers = ["alt", "shift"]
+key = "8"
+command = { command = "move_to_workspace", workspace = 8 }
+
+[[keybindings]]
+modifiers = ["alt", "shift"]
+key = "9"
+command = { command = "move_to_workspace", workspace = 9 }

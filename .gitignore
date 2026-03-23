@@ -1,3 +1,6 @@
+# Rust build artifacts
+/target
+
 # AI Dev Team (generated, per-project)
 .ai-team/
 .claude/stack.md

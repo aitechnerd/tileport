@@ -1,0 +1,17 @@
+[package]
+name = "tileport-macos"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tileport-core = { path = "../tileport-core" }
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSDictionary", "NSNotification"] }
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSWorkspace", "NSRunningApplication", "NSScreen"] }
+block2 = "0.6"
+accessibility-sys = "0.1"
+core-graphics = "0.25"
+core-foundation = "0.10"
+crossbeam-channel = "0.5"
+tracing = "0.1"
+anyhow = "1"

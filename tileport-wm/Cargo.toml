@@ -1,0 +1,19 @@
+[package]
+name = "tileport-wm"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "tileport-wm"
+path = "src/main.rs"
+
+[dependencies]
+tileport-core = { path = "../crates/tileport-core" }
+tileport-macos = { path = "../crates/tileport-macos" }
+crossbeam-channel = "0.5"
+tokio = { version = "1", features = ["rt", "net", "io-util", "sync"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+directories = "5"
+serde_json = "1"
+anyhow = "1"
