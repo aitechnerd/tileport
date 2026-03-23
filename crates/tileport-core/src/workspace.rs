@@ -309,6 +309,24 @@ impl WorkspaceManager {
         WorkspaceTransition { moves }
     }
 
+    /// Recalculate positions for the active workspace.
+    ///
+    /// Returns a transition with the current layout positions for all monocle
+    /// windows on the active workspace. Used after focus changes, window
+    /// add/remove, and other operations that need a layout refresh.
+    pub fn recalculate_active(&self) -> WorkspaceTransition {
+        let ws = &self.workspaces[self.active_index];
+        let fullscreen_focused = ws
+            .monocle
+            .focused()
+            .map(|id| ws.is_fullscreen(id))
+            .unwrap_or(false);
+        let moves = ws
+            .monocle
+            .calculate_positions(self.screen, self.gaps, fullscreen_focused);
+        WorkspaceTransition { moves }
+    }
+
     /// Get positions for ALL windows across ALL workspaces at visible positions.
     ///
     /// Used during shutdown to restore every window to an on-screen position.
