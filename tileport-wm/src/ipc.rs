@@ -7,7 +7,6 @@
 
 use crossbeam_channel::Sender;
 use serde::{Deserialize, Serialize};
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -111,22 +110,20 @@ pub fn start_ipc_thread(
                     return;
                 }
 
-                // Bind the Unix listener.
-                let listener = match UnixListener::bind(&path) {
+                // Bind with restrictive umask to avoid TOCTOU between bind and chmod.
+                // SAFETY: umask is thread-safe on macOS (per-process, but we're the only
+                // thread binding sockets). Restored immediately after bind.
+                let old_umask = unsafe { libc::umask(0o177) };
+                let bind_result = UnixListener::bind(&path);
+                unsafe { libc::umask(old_umask) };
+
+                let listener = match bind_result {
                     Ok(l) => l,
                     Err(e) => {
                         tracing::error!(error = %e, ?path, "failed to bind IPC socket");
                         return;
                     }
                 };
-
-                // Set socket permissions to 0o600 (DevSecOps requirement).
-                if let Err(e) =
-                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-                {
-                    tracing::error!(error = %e, "failed to set socket permissions");
-                    // Continue anyway -- the socket is bound.
-                }
 
                 tracing::info!(?path, "IPC socket listening");
 

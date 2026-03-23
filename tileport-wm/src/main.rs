@@ -54,12 +54,8 @@ fn main() -> Result<()> {
     let mut platform = platform;
     let mut initial_windows = Vec::new();
     for (info, ax_window) in enumerated {
-        tracing::info!(
-            id = ?info.window_id,
-            app = %info.app_id,
-            title = %info.title,
-            "discovered window"
-        );
+        tracing::info!(id = ?info.window_id, app = %info.app_id, "discovered window");
+        tracing::debug!(id = ?info.window_id, title = %info.title, "window title");
         platform.register_window(info.window_id, ax_window);
         initial_windows.push(info);
     }
