@@ -22,11 +22,13 @@ enum CliCommand {
     /// Switch to a workspace (1-9)
     Workspace {
         /// Workspace number (1-9)
+        #[arg(value_parser = clap::value_parser!(u8).range(1..=9))]
         number: u8,
     },
     /// Move focused window to a workspace (1-9)
     MoveToWorkspace {
         /// Target workspace number (1-9)
+        #[arg(value_parser = clap::value_parser!(u8).range(1..=9))]
         number: u8,
     },
     /// Toggle float for the focused window

@@ -153,6 +153,11 @@ impl WorkspaceManager {
     /// Returns a transition describing which windows to hide (move offscreen)
     /// and which to show (move to their layout positions).
     pub fn switch_workspace(&mut self, target: u8) -> WorkspaceTransition {
+        if !(1..=9).contains(&target) {
+            tracing::warn!(target, "workspace number out of range (1-9), ignoring");
+            return WorkspaceTransition { moves: vec![] };
+        }
+
         let target_index = (target - 1) as usize;
 
         if target_index == self.active_index {
@@ -201,6 +206,11 @@ impl WorkspaceManager {
     /// The window is removed from the source monocle and added to the target monocle.
     /// Returns a transition for re-laying out the source workspace.
     pub fn move_window_to_workspace(&mut self, target: u8) -> WorkspaceTransition {
+        if !(1..=9).contains(&target) {
+            tracing::warn!(target, "workspace number out of range (1-9), ignoring");
+            return WorkspaceTransition { moves: vec![] };
+        }
+
         let target_index = (target - 1) as usize;
 
         if target_index == self.active_index {
@@ -607,5 +617,46 @@ mod tests {
         for (_, rect) in &positions {
             assert!(rect.x < 10000.0, "shutdown positions should be on-screen");
         }
+    }
+
+    #[test]
+    fn test_switch_workspace_zero_returns_noop() {
+        let mut mgr = manager();
+        mgr.add_window(wid(1));
+
+        let transition = mgr.switch_workspace(0);
+        assert!(transition.moves.is_empty(), "workspace 0 should be a no-op");
+        assert_eq!(mgr.active_index(), 0, "active workspace should not change");
+    }
+
+    #[test]
+    fn test_switch_workspace_ten_returns_noop() {
+        let mut mgr = manager();
+        mgr.add_window(wid(1));
+
+        let transition = mgr.switch_workspace(10);
+        assert!(transition.moves.is_empty(), "workspace 10 should be a no-op");
+        assert_eq!(mgr.active_index(), 0, "active workspace should not change");
+    }
+
+    #[test]
+    fn test_move_window_to_workspace_zero_returns_noop() {
+        let mut mgr = manager();
+        mgr.add_window(wid(1));
+
+        let transition = mgr.move_window_to_workspace(0);
+        assert!(transition.moves.is_empty(), "workspace 0 should be a no-op");
+        // Window should still be in workspace 1.
+        assert!(mgr.workspace(1).monocle.windows().contains(&wid(1)));
+    }
+
+    #[test]
+    fn test_move_window_to_workspace_ten_returns_noop() {
+        let mut mgr = manager();
+        mgr.add_window(wid(1));
+
+        let transition = mgr.move_window_to_workspace(10);
+        assert!(transition.moves.is_empty(), "workspace 10 should be a no-op");
+        assert!(mgr.workspace(1).monocle.windows().contains(&wid(1)));
     }
 }

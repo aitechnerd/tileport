@@ -15,17 +15,18 @@ use tileport_core::platform::{PlatformApi, WindowInfo};
 use tileport_core::types::{Rect, WindowId};
 use tileport_core::workspace::{WorkspaceManager, WorkspaceTransition};
 
-/// Events from the AX observer (window creation/destruction).
+/// Events from the AX observer or polling thread (window creation/destruction).
 ///
-/// Variants are constructed by AXObserver callbacks or polling (not yet wired),
-/// and in tests. Allow dead_code until Phase 5 / AXObserver integration.
+/// Variants are constructed by the window polling thread and in tests.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum AxEvent {
     WindowCreated {
         id: WindowId,
         app_id: String,
         title: String,
+        /// AXWindow handle for registration with the platform layer.
+        /// None in tests; Some when coming from the polling thread.
+        ax_window: Option<tileport_macos::accessibility::AXWindow>,
     },
     WindowDestroyed {
         id: WindowId,
@@ -129,7 +130,7 @@ pub fn process_ax_event(
     platform: &dyn PlatformApi,
 ) {
     match event {
-        AxEvent::WindowCreated { id, app_id, title } => {
+        AxEvent::WindowCreated { id, app_id, title, .. } => {
             tracing::info!(?id, app_id, title, "window created");
             workspace_mgr.add_window(*id);
             let transition = workspace_mgr.recalculate_active();
@@ -165,17 +166,45 @@ pub fn shutdown(workspace_mgr: &WorkspaceManager, platform: &dyn PlatformApi) {
     }
 }
 
+/// Trait for registering/unregistering AX window handles with the platform.
+///
+/// Implemented by `MacOSPlatform` in production. The mock platform in tests
+/// uses the default no-op implementation.
+pub trait WindowRegistry {
+    fn register_ax_window(
+        &mut self,
+        _window_id: WindowId,
+        _ax_window: tileport_macos::accessibility::AXWindow,
+    ) {
+    }
+    fn unregister_ax_window(&mut self, _window_id: WindowId) {}
+}
+
+impl WindowRegistry for tileport_macos::MacOSPlatform {
+    fn register_ax_window(
+        &mut self,
+        window_id: WindowId,
+        ax_window: tileport_macos::accessibility::AXWindow,
+    ) {
+        self.register_window(window_id, ax_window);
+    }
+
+    fn unregister_ax_window(&mut self, window_id: WindowId) {
+        self.unregister_window(window_id);
+    }
+}
+
 /// Run the manager loop until shutdown.
 ///
 /// This is the main function for the manager thread. It receives commands
 /// from the hotkey thread and AX events, processes them, and applies
 /// window transitions.
 #[allow(clippy::too_many_arguments)]
-pub fn manager_loop(
+pub fn manager_loop<P: PlatformApi + WindowRegistry>(
     hotkey_rx: Receiver<Command>,
     ax_rx: Receiver<AxEvent>,
     ipc_rx: Receiver<IpcMessage>,
-    platform: &dyn PlatformApi,
+    platform: &mut P,
     config: &Config,
     screen: Rect,
     initial_windows: Vec<WindowInfo>,
@@ -235,6 +264,18 @@ pub fn manager_loop(
                 match msg {
                     Ok(event) => {
                         tracing::debug!(?event, "received AX event");
+                        // Register/unregister AX window handles with the platform layer
+                        // before processing the event (so move/focus calls can find the handle).
+                        match &event {
+                            AxEvent::WindowCreated { id, ax_window, .. } => {
+                                if let Some(ax_win) = ax_window {
+                                    platform.register_ax_window(*id, ax_win.clone());
+                                }
+                            }
+                            AxEvent::WindowDestroyed { id } => {
+                                platform.unregister_ax_window(*id);
+                            }
+                        }
                         process_ax_event(&event, &mut workspace_mgr, platform);
                     }
                     Err(_) => {
@@ -305,6 +346,8 @@ mod tests {
             self.focus_calls.lock().unwrap().clear();
         }
     }
+
+    impl WindowRegistry for MockPlatform {}
 
     impl PlatformApi for MockPlatform {
         fn enumerate_windows(&self) -> anyhow::Result<Vec<WindowInfo>> {
@@ -489,6 +532,7 @@ mod tests {
                 id: wid(2),
                 app_id: "com.test.app".into(),
                 title: "New Window".into(),
+                ax_window: None,
             },
             &mut mgr,
             &platform,
@@ -535,7 +579,7 @@ mod tests {
 
     #[test]
     fn test_manager_loop_quit_command() {
-        let platform = MockPlatform::new();
+        let mut platform = MockPlatform::new();
         let config = test_config();
         let (hotkey_tx, hotkey_rx) = crossbeam_channel::bounded(16);
         let (_ax_tx, ax_rx) = crossbeam_channel::bounded::<AxEvent>(16);
@@ -556,7 +600,7 @@ mod tests {
             hotkey_rx,
             ax_rx,
             ipc_rx,
-            &platform,
+            &mut platform,
             &config,
             screen(),
             initial_windows,
@@ -570,7 +614,7 @@ mod tests {
 
     #[test]
     fn test_manager_loop_shutdown_flag() {
-        let platform = MockPlatform::new();
+        let mut platform = MockPlatform::new();
         let config = test_config();
         let (_hotkey_tx, hotkey_rx) = crossbeam_channel::bounded(16);
         let (_ax_tx, ax_rx) = crossbeam_channel::bounded::<AxEvent>(16);
@@ -581,7 +625,7 @@ mod tests {
             hotkey_rx,
             ax_rx,
             ipc_rx,
-            &platform,
+            &mut platform,
             &config,
             screen(),
             vec![],
@@ -593,7 +637,7 @@ mod tests {
 
     #[test]
     fn test_manager_loop_ipc_quit() {
-        let platform = MockPlatform::new();
+        let mut platform = MockPlatform::new();
         let config = test_config();
         let (_hotkey_tx, hotkey_rx) = crossbeam_channel::bounded(16);
         let (_ax_tx, ax_rx) = crossbeam_channel::bounded::<AxEvent>(16);
@@ -608,7 +652,7 @@ mod tests {
             hotkey_rx,
             ax_rx,
             ipc_rx,
-            &platform,
+            &mut platform,
             &config,
             screen(),
             vec![],
@@ -622,7 +666,7 @@ mod tests {
 
     #[test]
     fn test_manager_loop_ipc_command() {
-        let platform = MockPlatform::new();
+        let mut platform = MockPlatform::new();
         let config = test_config();
         let (_hotkey_tx, hotkey_rx) = crossbeam_channel::bounded(16);
         let (_ax_tx, ax_rx) = crossbeam_channel::bounded::<AxEvent>(16);
@@ -654,7 +698,7 @@ mod tests {
             hotkey_rx,
             ax_rx,
             ipc_rx,
-            &platform,
+            &mut platform,
             &config,
             screen(),
             initial_windows,
@@ -696,5 +740,61 @@ mod tests {
         let ws = mgr.active_workspace();
         assert!(ws.floating_windows.contains(&wid(2)));
         assert!(!ws.monocle.windows().contains(&wid(2)));
+    }
+
+    /// Test that the manager loop processes window create/destroy events from
+    /// the ax_rx channel (simulating what the polling thread would send).
+    #[test]
+    fn test_manager_loop_ax_events_from_poll() {
+        let mut platform = MockPlatform::new();
+        let config = test_config();
+        let (_hotkey_tx, hotkey_rx) = crossbeam_channel::bounded(16);
+        let (ax_tx, ax_rx) = crossbeam_channel::bounded::<AxEvent>(16);
+        let (ipc_tx, ipc_rx) = crossbeam_channel::bounded::<IpcMessage>(16);
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
+
+        let initial_windows = vec![WindowInfo {
+            window_id: wid(1),
+            app_id: "com.test".into(),
+            title: "Test".into(),
+            pid: 1,
+        }];
+
+        // Simulate polling thread: new window created, then quit.
+        ax_tx
+            .send(AxEvent::WindowCreated {
+                id: wid(2),
+                app_id: "com.test.new".into(),
+                title: "New Window".into(),
+                ax_window: None,
+            })
+            .unwrap();
+
+        // Send quit via IPC after the ax event.
+        let (resp_tx, _resp_rx) = tokio::sync::oneshot::channel();
+        ipc_tx.send((Command::Quit, resp_tx)).unwrap();
+
+        manager_loop(
+            hotkey_rx,
+            ax_rx,
+            ipc_rx,
+            &mut platform,
+            &config,
+            screen(),
+            initial_windows,
+            shutdown_flag,
+        );
+
+        // Shutdown should have restored both windows (wid(1) and wid(2)).
+        let moves = platform.move_calls();
+        let restored_ids: Vec<WindowId> = moves.iter().map(|(id, _)| *id).collect();
+        assert!(
+            restored_ids.contains(&wid(1)),
+            "original window should be restored"
+        );
+        assert!(
+            restored_ids.contains(&wid(2)),
+            "poll-created window should be restored"
+        );
     }
 }
