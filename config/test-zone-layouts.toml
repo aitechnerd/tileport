@@ -1,0 +1,28 @@
+[gaps]
+inner = 8
+outer = 10
+
+[layouts.laptop-2col]
+type = "columns"
+ratios = [0.40, 0.60]
+
+[layouts.wide-3col]
+type = "columns"
+ratios = [0.30, 0.40, 0.30]
+
+[layouts.main-stack]
+type = "columns"
+ratios = [0.50, 0.50]
+[layouts.main-stack.splits.1]
+type = "rows"
+ratios = [0.50, 0.50]
+
+[layouts.two-row]
+type = "rows"
+ratios = [0.60, 0.40]
+
+[workspaces]
+1 = { layout = "laptop-2col" }
+2 = { layout = "wide-3col" }
+3 = { layout = "main-stack" }
+4 = { layout = "two-row" }

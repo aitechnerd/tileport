@@ -744,6 +744,25 @@ layout = "deep"
     }
 
     #[test]
+    fn test_zone_test_config_parses_all_layouts() {
+        let toml_str = include_str!("../../../config/test-zone-layouts.toml");
+        let config = Config::from_toml(toml_str).unwrap();
+        assert_eq!(config.layouts.len(), 4);
+        assert!(config.layouts.contains_key("laptop-2col"));
+        assert!(config.layouts.contains_key("wide-3col"));
+        assert!(config.layouts.contains_key("main-stack"));
+        assert!(config.layouts.contains_key("two-row"));
+        let layouts = config.build_workspace_layouts();
+        // All 4 workspaces should get zone layouts
+        for ws_id in 1..=4u8 {
+            match &layouts[&ws_id] {
+                WorkspaceLayout::Zone(_) => {}
+                WorkspaceLayout::Monocle(_) => panic!("workspace {ws_id} should be zone layout"),
+            }
+        }
+    }
+
+    #[test]
     fn test_rows_layout_type() {
         let toml_str = r#"
 [layouts.two-rows]
