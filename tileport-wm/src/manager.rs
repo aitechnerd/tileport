@@ -118,6 +118,48 @@ pub fn process_command(
                 apply_transition(platform, &transition);
             }
         }
+        Command::FocusDirection { direction } => {
+            let focused_before = workspace_mgr.active_workspace().layout.focused();
+            let ws = workspace_mgr.active_workspace_mut();
+            let new_focused = ws.layout.focus_direction(*direction);
+
+            if new_focused != focused_before {
+                let transition = workspace_mgr.recalculate_active();
+                apply_transition(platform, &transition);
+
+                if let Some(id) = new_focused {
+                    if let Err(e) = platform.focus_window(id) {
+                        tracing::warn!(?id, error = %e, "failed to focus window");
+                    }
+                }
+            }
+        }
+        Command::MoveToZone { direction } => {
+            let moved = workspace_mgr.move_to_zone(*direction);
+            if moved {
+                let transition = workspace_mgr.recalculate_active();
+                apply_transition(platform, &transition);
+
+                if let Some(id) = workspace_mgr.active_workspace().layout.focused() {
+                    if let Err(e) = platform.focus_window(id) {
+                        tracing::warn!(?id, error = %e, "failed to focus window");
+                    }
+                }
+            }
+        }
+        Command::PromoteToPrimary => {
+            let promoted = workspace_mgr.promote_to_primary();
+            if promoted {
+                let transition = workspace_mgr.recalculate_active();
+                apply_transition(platform, &transition);
+
+                if let Some(id) = workspace_mgr.active_workspace().layout.focused() {
+                    if let Err(e) = platform.focus_window(id) {
+                        tracing::warn!(?id, error = %e, "failed to focus window");
+                    }
+                }
+            }
+        }
         Command::Quit => {
             // Handled by the caller in manager_loop.
         }
@@ -990,5 +1032,158 @@ mod tests {
         assert!(platform.move_calls().is_empty());
         assert!(platform.focus_calls().is_empty());
         assert_eq!(mgr.active_workspace().layout.len(), 1);
+    }
+
+    // --- Zone command tests ---
+
+    use tileport_core::workspace::WorkspaceLayout;
+    use tileport_core::zone::{Direction, ZoneLayout, ZoneNode};
+
+    /// Create a 2-column (50/50) zone workspace manager with windows added.
+    fn setup_zone_manager_with_windows(window_ids: &[u32]) -> WorkspaceManager {
+        let root = ZoneNode::HSplit {
+            ratios: vec![0.5, 0.5],
+            children: vec![ZoneNode::Leaf, ZoneNode::Leaf],
+        };
+        let zone_layout = ZoneLayout::new(root, vec![0, 1], 0);
+        let layout = WorkspaceLayout::Zone(zone_layout);
+
+        let mut mgr = WorkspaceManager::new();
+        mgr.set_screen_and_gaps(
+            screen(),
+            tileport_core::types::Gaps {
+                inner: 8.0,
+                outer: 10.0,
+            },
+        );
+
+        // Replace workspace 1's layout with the zone layout.
+        *mgr.workspace_mut(1) =
+            tileport_core::workspace::Workspace::new_with_layout(1, layout);
+
+        for &id in window_ids {
+            mgr.add_window(wid(id));
+        }
+        mgr
+    }
+
+    #[test]
+    fn test_process_focus_direction_zone() {
+        let platform = MockPlatform::new();
+        // 2 windows in a 2-column zone: wid(1) in zone 0, wid(2) in zone 1.
+        let mut mgr = setup_zone_manager_with_windows(&[1, 2]);
+        // After adding, focused is wid(2) in zone 1.
+        assert_eq!(mgr.active_workspace().layout.focused(), Some(wid(2)));
+        platform.clear();
+
+        // FocusDirection Left should move focus to wid(1) in zone 0.
+        process_command(
+            &Command::FocusDirection {
+                direction: Direction::Left,
+            },
+            &mut mgr,
+            &platform,
+        );
+
+        assert_eq!(mgr.active_workspace().layout.focused(), Some(wid(1)));
+        assert!(platform.focus_calls().contains(&wid(1)));
+        // Should have recalculated layout (move calls).
+        assert!(!platform.move_calls().is_empty());
+    }
+
+    #[test]
+    fn test_process_focus_direction_monocle_fallback() {
+        let platform = MockPlatform::new();
+        // Monocle workspace (default).
+        let mut mgr = setup_manager_with_windows(&[1, 2, 3]);
+        // focused = wid(3)
+        platform.clear();
+
+        // FocusDirection Down should act as focus_next (wrap to wid(1)).
+        process_command(
+            &Command::FocusDirection {
+                direction: Direction::Down,
+            },
+            &mut mgr,
+            &platform,
+        );
+
+        assert_eq!(mgr.active_workspace().layout.focused(), Some(wid(1)));
+        assert!(platform.focus_calls().contains(&wid(1)));
+    }
+
+    #[test]
+    fn test_process_move_to_zone() {
+        let platform = MockPlatform::new();
+        // 2 windows in 2-column zone.
+        let mut mgr = setup_zone_manager_with_windows(&[1, 2]);
+        // wid(1) in zone 0, wid(2) in zone 1. Focused = wid(2).
+        platform.clear();
+
+        // Move wid(2) to the left zone (swap with wid(1)).
+        process_command(
+            &Command::MoveToZone {
+                direction: Direction::Left,
+            },
+            &mut mgr,
+            &platform,
+        );
+
+        // After move, focused window should still be wid(2).
+        assert_eq!(mgr.active_workspace().layout.focused(), Some(wid(2)));
+        // Layout should have been recalculated.
+        assert!(!platform.move_calls().is_empty());
+        // Focus should have been called.
+        assert!(platform.focus_calls().contains(&wid(2)));
+    }
+
+    #[test]
+    fn test_process_promote_to_primary() {
+        let platform = MockPlatform::new();
+        // 2 windows in 2-column zone. Primary zone = 0.
+        let mut mgr = setup_zone_manager_with_windows(&[1, 2]);
+        // wid(1) in zone 0 (primary), wid(2) in zone 1. Focused = wid(2).
+        platform.clear();
+
+        // Promote wid(2) to primary zone (swap with wid(1)).
+        process_command(&Command::PromoteToPrimary, &mut mgr, &platform);
+
+        // After promote, focused window should still be wid(2).
+        assert_eq!(mgr.active_workspace().layout.focused(), Some(wid(2)));
+        // Layout should have been recalculated.
+        assert!(!platform.move_calls().is_empty());
+        assert!(platform.focus_calls().contains(&wid(2)));
+    }
+
+    #[test]
+    fn test_process_focus_direction_boundary_noop() {
+        let platform = MockPlatform::new();
+        // 2 windows in 2-column zone.
+        let mut mgr = setup_zone_manager_with_windows(&[1, 2]);
+        // Focus wid(1) in zone 0 first.
+        process_command(
+            &Command::FocusDirection {
+                direction: Direction::Left,
+            },
+            &mut mgr,
+            &platform,
+        );
+        assert_eq!(mgr.active_workspace().layout.focused(), Some(wid(1)));
+        platform.clear();
+
+        // FocusDirection Left again at boundary -- should be a no-op.
+        process_command(
+            &Command::FocusDirection {
+                direction: Direction::Left,
+            },
+            &mut mgr,
+            &platform,
+        );
+
+        // Focus unchanged.
+        assert_eq!(mgr.active_workspace().layout.focused(), Some(wid(1)));
+        // No platform calls since focus didn't change.
+        assert!(platform.move_calls().is_empty());
+        assert!(platform.focus_calls().is_empty());
     }
 }

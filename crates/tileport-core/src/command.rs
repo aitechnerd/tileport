@@ -1,3 +1,5 @@
+use crate::zone::Direction;
+
 /// All commands the manager thread can process.
 ///
 /// Commands arrive from hotkeys, IPC, or AX observer events.
@@ -7,6 +9,9 @@
 pub enum Command {
     FocusNext,
     FocusPrev,
+    FocusDirection { direction: Direction },
+    MoveToZone { direction: Direction },
+    PromoteToPrimary,
     SwitchWorkspace { workspace: u8 },
     MoveToWorkspace { workspace: u8 },
     ToggleFloat,
@@ -75,6 +80,34 @@ mod tests {
     }
 
     #[test]
+    fn test_focus_direction_roundtrip() {
+        let cmd = Command::FocusDirection {
+            direction: Direction::Left,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let deserialized: Command = serde_json::from_str(&json).unwrap();
+        assert_eq!(cmd, deserialized);
+    }
+
+    #[test]
+    fn test_move_to_zone_roundtrip() {
+        let cmd = Command::MoveToZone {
+            direction: Direction::Right,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let deserialized: Command = serde_json::from_str(&json).unwrap();
+        assert_eq!(cmd, deserialized);
+    }
+
+    #[test]
+    fn test_promote_to_primary_roundtrip() {
+        let cmd = Command::PromoteToPrimary;
+        let json = serde_json::to_string(&cmd).unwrap();
+        let deserialized: Command = serde_json::from_str(&json).unwrap();
+        assert_eq!(cmd, deserialized);
+    }
+
+    #[test]
     fn test_all_commands_serialize_to_expected_json() {
         // Verify the JSON shape matches the IPC protocol spec
         let json = serde_json::to_string(&Command::FocusNext).unwrap();
@@ -88,6 +121,21 @@ mod tests {
 
         let json = serde_json::to_string(&Command::Quit).unwrap();
         assert_eq!(json, r#"{"command":"quit"}"#);
+
+        let json = serde_json::to_string(&Command::FocusDirection {
+            direction: Direction::Left,
+        })
+        .unwrap();
+        assert_eq!(json, r#"{"command":"focus_direction","direction":"left"}"#);
+
+        let json = serde_json::to_string(&Command::MoveToZone {
+            direction: Direction::Right,
+        })
+        .unwrap();
+        assert_eq!(json, r#"{"command":"move_to_zone","direction":"right"}"#);
+
+        let json = serde_json::to_string(&Command::PromoteToPrimary).unwrap();
+        assert_eq!(json, r#"{"command":"promote_to_primary"}"#);
     }
 
     #[test]
@@ -99,6 +147,28 @@ mod tests {
         let cmd: Command =
             serde_json::from_str(r#"{"command":"switch_workspace","workspace":7}"#).unwrap();
         assert_eq!(cmd, Command::SwitchWorkspace { workspace: 7 });
+
+        let cmd: Command =
+            serde_json::from_str(r#"{"command":"focus_direction","direction":"left"}"#).unwrap();
+        assert_eq!(
+            cmd,
+            Command::FocusDirection {
+                direction: Direction::Left,
+            }
+        );
+
+        let cmd: Command =
+            serde_json::from_str(r#"{"command":"move_to_zone","direction":"right"}"#).unwrap();
+        assert_eq!(
+            cmd,
+            Command::MoveToZone {
+                direction: Direction::Right,
+            }
+        );
+
+        let cmd: Command =
+            serde_json::from_str(r#"{"command":"promote_to_primary"}"#).unwrap();
+        assert_eq!(cmd, Command::PromoteToPrimary);
     }
 
     #[test]
