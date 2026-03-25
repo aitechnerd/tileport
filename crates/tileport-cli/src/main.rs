@@ -69,6 +69,10 @@ enum ZoneDirection {
     Left,
     /// Move to the zone on the right
     Right,
+    /// Move to the zone above
+    Up,
+    /// Move to the zone below
+    Down,
 }
 
 /// Convert CLI subcommand to the core Command enum.
@@ -96,6 +100,12 @@ fn to_command(cli_cmd: &CliCommand) -> Command {
             },
             ZoneDirection::Right => Command::MoveToZone {
                 direction: Direction::Right,
+            },
+            ZoneDirection::Up => Command::MoveToZone {
+                direction: Direction::Up,
+            },
+            ZoneDirection::Down => Command::MoveToZone {
+                direction: Direction::Down,
             },
         },
         CliCommand::Promote => Command::PromoteToPrimary,
@@ -301,6 +311,32 @@ mod tests {
     }
 
     #[test]
+    fn test_move_to_zone_up_to_command() {
+        let cmd = to_command(&CliCommand::MoveToZone {
+            direction: ZoneDirection::Up,
+        });
+        assert_eq!(
+            cmd,
+            Command::MoveToZone {
+                direction: Direction::Up,
+            }
+        );
+    }
+
+    #[test]
+    fn test_move_to_zone_down_to_command() {
+        let cmd = to_command(&CliCommand::MoveToZone {
+            direction: ZoneDirection::Down,
+        });
+        assert_eq!(
+            cmd,
+            Command::MoveToZone {
+                direction: Direction::Down,
+            }
+        );
+    }
+
+    #[test]
     fn test_promote_to_command() {
         let cmd = to_command(&CliCommand::Promote);
         assert_eq!(cmd, Command::PromoteToPrimary);
@@ -387,6 +423,18 @@ mod tests {
                     direction: ZoneDirection::Right,
                 },
                 r#"{"command":"move_to_zone","direction":"right"}"#,
+            ),
+            (
+                CliCommand::MoveToZone {
+                    direction: ZoneDirection::Up,
+                },
+                r#"{"command":"move_to_zone","direction":"up"}"#,
+            ),
+            (
+                CliCommand::MoveToZone {
+                    direction: ZoneDirection::Down,
+                },
+                r#"{"command":"move_to_zone","direction":"down"}"#,
             ),
             (CliCommand::Promote, r#"{"command":"promote_to_primary"}"#),
             (

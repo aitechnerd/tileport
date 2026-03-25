@@ -177,15 +177,20 @@ impl ZoneLayout {
 
     /// Add a window to the layout per fill order. The new window becomes focused.
     ///
-    /// If all zones have at least one window, the new window is pushed as
-    /// overflow into the last zone in fill order.
+    /// Finds the first zone in fill order that is empty. If all zones have at
+    /// least one window, the new window is pushed as overflow into the last
+    /// zone in fill order. This is idempotent across remove/add cycles.
     pub fn add_window(&mut self, id: WindowId) {
-        let zone_idx = if self.window_count < self.fill_order.len() {
-            self.fill_order[self.window_count]
-        } else {
-            // Overflow: push to last fill_order zone.
-            *self.fill_order.last().unwrap_or(&0)
-        };
+        // Find the first empty zone in fill order.
+        let zone_idx = self
+            .fill_order
+            .iter()
+            .find(|&&fi| self.zones[fi].is_empty())
+            .copied()
+            .unwrap_or_else(|| {
+                // All zones occupied: overflow to last fill_order zone.
+                *self.fill_order.last().unwrap_or(&0)
+            });
         self.zones[zone_idx].push(id);
         self.focused_zone = zone_idx;
         self.window_count += 1;
@@ -323,6 +328,18 @@ impl ZoneLayout {
         if let Some(target) = adj {
             if !self.zones[target].is_empty() {
                 self.focused_zone = target;
+            }
+        } else {
+            // No adjacent zone in this direction: fall back to cycling
+            // the overflow stack within the current zone, so overflow
+            // windows remain reachable via directional keys.
+            match dir {
+                Direction::Down | Direction::Right => {
+                    self.focus_next();
+                }
+                Direction::Up | Direction::Left => {
+                    self.focus_prev();
+                }
             }
         }
         self.focused()
@@ -1183,5 +1200,113 @@ mod tests {
     fn test_direction_serde_snake_case() {
         let json = serde_json::to_string(&Direction::Left).unwrap();
         assert_eq!(json, "\"left\"");
+    }
+
+    // --- Bug fix: add_window fills empty zones after remove ---
+
+    #[test]
+    fn test_add_window_fills_hole_after_remove() {
+        // Bug 1: add 2 windows to 2-zone layout, remove from zone 0,
+        // add new window — it should go to the now-empty zone 0.
+        let (root, fill_order, primary) = two_col([0.50, 0.50]);
+        let mut layout = ZoneLayout::new(root, fill_order, primary);
+
+        layout.add_window(wid(1)); // zone 0
+        layout.add_window(wid(2)); // zone 1
+
+        assert_eq!(layout.zones[0], vec![wid(1)]);
+        assert_eq!(layout.zones[1], vec![wid(2)]);
+
+        // Remove window from zone 0.
+        layout.remove_window(wid(1));
+        assert!(layout.zones[0].is_empty());
+
+        // Add a new window — should fill the empty zone 0, not overflow to zone 1.
+        layout.add_window(wid(3));
+        assert_eq!(layout.zones[0], vec![wid(3)]);
+        assert_eq!(layout.zones[1], vec![wid(2)]);
+    }
+
+    #[test]
+    fn test_add_window_fills_hole_3col_center_first() {
+        // 3-col center-first: remove center window, add new one → fills center.
+        let (root, fill_order, primary) = three_col([0.30, 0.40, 0.30]);
+        let mut layout = ZoneLayout::new(root, fill_order, primary);
+
+        layout.add_window(wid(1)); // center (zone 1)
+        layout.add_window(wid(2)); // left (zone 0)
+        layout.add_window(wid(3)); // right (zone 2)
+
+        layout.remove_window(wid(1)); // center now empty
+        assert!(layout.zones[1].is_empty());
+
+        layout.add_window(wid(4)); // should fill center (first empty in fill_order)
+        assert_eq!(layout.zones[1], vec![wid(4)]);
+        assert_eq!(layout.zones[0], vec![wid(2)]);
+        assert_eq!(layout.zones[2], vec![wid(3)]);
+    }
+
+    // --- Bug fix: focus_direction cycles overflow at boundary ---
+
+    #[test]
+    fn test_focus_direction_cycles_overflow_at_boundary() {
+        // Bug 2: 2-col layout with 3 windows (zone 1 has 2 stacked),
+        // pressing Down when no zone below should cycle to next overflow window.
+        let (root, fill_order, primary) = two_col([0.50, 0.50]);
+        let mut layout = ZoneLayout::new(root, fill_order, primary);
+
+        layout.add_window(wid(1)); // zone 0
+        layout.add_window(wid(2)); // zone 1
+        layout.add_window(wid(3)); // overflow zone 1
+
+        layout.focused_zone = 1;
+        assert_eq!(layout.focused(), Some(wid(2)));
+
+        // Down with no zone below in a 2-col (horizontal) layout → cycles overflow.
+        let result = layout.focus_direction(Direction::Down);
+        assert_eq!(result, Some(wid(3))); // cycled to overflow window
+
+        // Down again → cycles back.
+        let result = layout.focus_direction(Direction::Down);
+        assert_eq!(result, Some(wid(2)));
+    }
+
+    #[test]
+    fn test_focus_direction_up_cycles_overflow_backward() {
+        // Up with no zone above → cycles overflow backward (focus_prev).
+        let (root, fill_order, primary) = two_col([0.50, 0.50]);
+        let mut layout = ZoneLayout::new(root, fill_order, primary);
+
+        layout.add_window(wid(1)); // zone 0
+        layout.add_window(wid(2)); // zone 1
+        layout.add_window(wid(3)); // overflow zone 1
+
+        layout.focused_zone = 1;
+        assert_eq!(layout.focused(), Some(wid(2)));
+
+        // Up with no zone above → focus_prev, rotates [2,3] → [3,2].
+        let result = layout.focus_direction(Direction::Up);
+        assert_eq!(result, Some(wid(3)));
+    }
+
+    // --- Bug fix: CLI move-to-zone up/down ---
+
+    #[test]
+    fn test_move_to_zone_up_down_composite() {
+        // move_to_zone with Up/Down in composite layout.
+        let (root, fill_order, primary) = composite_main_stack();
+        let mut layout = ZoneLayout::new(root, fill_order, primary);
+
+        layout.add_window(wid(1)); // zone 0 (left)
+        layout.add_window(wid(2)); // zone 1 (top-right)
+        layout.add_window(wid(3)); // zone 2 (bottom-right)
+
+        // Focus top-right, move down.
+        layout.focused_zone = 1;
+        let moved = layout.move_to_zone(Direction::Down);
+        assert!(moved);
+        assert_eq!(layout.focused_zone, 2);
+        assert_eq!(layout.zones[2][0], wid(2));
+        assert_eq!(layout.zones[1][0], wid(3));
     }
 }
