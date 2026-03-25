@@ -55,9 +55,9 @@ pub fn process_command(
 ) {
     match command {
         Command::FocusNext => {
-            let focused_before = workspace_mgr.active_workspace().monocle.focused();
+            let focused_before = workspace_mgr.active_workspace().layout.focused();
             let ws = workspace_mgr.active_workspace_mut();
-            let new_focused = ws.monocle.focus_next();
+            let new_focused = ws.layout.focus_next();
 
             if new_focused != focused_before {
                 let transition = workspace_mgr.recalculate_active();
@@ -71,9 +71,9 @@ pub fn process_command(
             }
         }
         Command::FocusPrev => {
-            let focused_before = workspace_mgr.active_workspace().monocle.focused();
+            let focused_before = workspace_mgr.active_workspace().layout.focused();
             let ws = workspace_mgr.active_workspace_mut();
-            let new_focused = ws.monocle.focus_prev();
+            let new_focused = ws.layout.focus_prev();
 
             if new_focused != focused_before {
                 let transition = workspace_mgr.recalculate_active();
@@ -90,7 +90,7 @@ pub fn process_command(
             let transition = workspace_mgr.switch_workspace(*workspace);
             apply_transition(platform, &transition);
 
-            if let Some(id) = workspace_mgr.active_workspace().monocle.focused() {
+            if let Some(id) = workspace_mgr.active_workspace().layout.focused() {
                 if let Err(e) = platform.focus_window(id) {
                     tracing::warn!(?id, error = %e, "failed to focus window");
                 }
@@ -100,20 +100,20 @@ pub fn process_command(
             let transition = workspace_mgr.move_window_to_workspace(*workspace);
             apply_transition(platform, &transition);
 
-            if let Some(id) = workspace_mgr.active_workspace().monocle.focused() {
+            if let Some(id) = workspace_mgr.active_workspace().layout.focused() {
                 if let Err(e) = platform.focus_window(id) {
                     tracing::warn!(?id, error = %e, "failed to focus window");
                 }
             }
         }
         Command::ToggleFloat => {
-            if let Some(id) = workspace_mgr.active_workspace().monocle.focused() {
+            if let Some(id) = workspace_mgr.active_workspace().layout.focused() {
                 let transition = workspace_mgr.toggle_float(id);
                 apply_transition(platform, &transition);
             }
         }
         Command::ToggleFullscreen => {
-            if let Some(id) = workspace_mgr.active_workspace().monocle.focused() {
+            if let Some(id) = workspace_mgr.active_workspace().layout.focused() {
                 let transition = workspace_mgr.toggle_fullscreen(id);
                 apply_transition(platform, &transition);
             }
@@ -149,7 +149,7 @@ pub fn process_ax_event(
             let transition = workspace_mgr.recalculate_active();
             apply_transition(platform, &transition);
 
-            if let Some(focused_id) = workspace_mgr.active_workspace().monocle.focused() {
+            if let Some(focused_id) = workspace_mgr.active_workspace().layout.focused() {
                 if let Err(e) = platform.focus_window(focused_id) {
                     tracing::warn!(?focused_id, error = %e, "failed to focus after destroy");
                 }
@@ -264,7 +264,7 @@ fn poll_windows<P: PlatformApi + WindowRegistry>(
         let transition = workspace_mgr.recalculate_active();
         apply_transition(platform, &transition);
 
-        if let Some(focused_id) = workspace_mgr.active_workspace().monocle.focused() {
+        if let Some(focused_id) = workspace_mgr.active_workspace().layout.focused() {
             if let Err(e) = platform.focus_window(focused_id) {
                 tracing::warn!(?focused_id, error = %e, "failed to focus after destroy");
             }
@@ -303,7 +303,7 @@ pub fn manager_loop<P: PlatformApi + WindowRegistry>(
     apply_transition(platform, &transition);
 
     // Focus the focused window.
-    if let Some(id) = workspace_mgr.active_workspace().monocle.focused() {
+    if let Some(id) = workspace_mgr.active_workspace().layout.focused() {
         if let Err(e) = platform.focus_window(id) {
             tracing::warn!(?id, error = %e, "failed to focus initial window");
         }
@@ -520,7 +520,7 @@ mod tests {
         process_command(&Command::FocusNext, &mut mgr, &platform);
 
         // Focus should wrap to wid(1).
-        assert_eq!(mgr.active_workspace().monocle.focused(), Some(wid(1)));
+        assert_eq!(mgr.active_workspace().layout.focused(), Some(wid(1)));
 
         // Platform should have received move_window calls for repositioning.
         let moves = platform.move_calls();
@@ -551,7 +551,7 @@ mod tests {
 
         process_command(&Command::FocusPrev, &mut mgr, &platform);
 
-        assert_eq!(mgr.active_workspace().monocle.focused(), Some(wid(2)));
+        assert_eq!(mgr.active_workspace().layout.focused(), Some(wid(2)));
         assert!(platform.focus_calls().contains(&wid(2)));
     }
 
@@ -591,9 +591,9 @@ mod tests {
         );
 
         // wid(2) should be in workspace 3.
-        assert!(mgr.workspace(3).monocle.windows().contains(&wid(2)));
+        assert!(mgr.workspace(3).layout.windows().contains(&wid(2)));
         // wid(1) should still be in workspace 1.
-        assert!(mgr.workspace(1).monocle.windows().contains(&wid(1)));
+        assert!(mgr.workspace(1).layout.windows().contains(&wid(1)));
         // Active workspace is still 1.
         assert_eq!(mgr.active_index(), 0);
 
@@ -644,8 +644,8 @@ mod tests {
         );
 
         // Window 2 should be added and become focused.
-        assert_eq!(mgr.active_workspace().monocle.len(), 2);
-        assert_eq!(mgr.active_workspace().monocle.focused(), Some(wid(2)));
+        assert_eq!(mgr.active_workspace().layout.len(), 2);
+        assert_eq!(mgr.active_workspace().layout.focused(), Some(wid(2)));
 
         // Platform should have moved windows.
         let moves = platform.move_calls();
@@ -674,9 +674,9 @@ mod tests {
         );
 
         // Window 3 should be removed.
-        assert_eq!(mgr.active_workspace().monocle.len(), 2);
+        assert_eq!(mgr.active_workspace().layout.len(), 2);
         // Focus should promote to wid(2).
-        assert_eq!(mgr.active_workspace().monocle.focused(), Some(wid(2)));
+        assert_eq!(mgr.active_workspace().layout.focused(), Some(wid(2)));
 
         // Should have focused the promoted window.
         assert!(platform.focus_calls().contains(&wid(2)));
@@ -844,7 +844,7 @@ mod tests {
 
         let ws = mgr.active_workspace();
         assert!(ws.floating_windows.contains(&wid(2)));
-        assert!(!ws.monocle.windows().contains(&wid(2)));
+        assert!(!ws.layout.windows().contains(&wid(2)));
     }
 
     /// Test that the manager loop processes AX events from the ax_rx channel.
@@ -940,7 +940,7 @@ mod tests {
         poll_windows(&mut mgr, &mut platform, &mut known_ids);
 
         // wid(2) should have been added to the workspace.
-        assert_eq!(mgr.active_workspace().monocle.len(), 2);
+        assert_eq!(mgr.active_workspace().layout.len(), 2);
         assert!(known_ids.contains(&wid(2)));
         // Should have focused the new window.
         assert!(platform.focus_calls().contains(&wid(2)));
@@ -964,7 +964,7 @@ mod tests {
         poll_windows(&mut mgr, &mut platform, &mut known_ids);
 
         // wid(2) should have been removed.
-        assert_eq!(mgr.active_workspace().monocle.len(), 1);
+        assert_eq!(mgr.active_workspace().layout.len(), 1);
         assert!(!known_ids.contains(&wid(2)));
         assert!(known_ids.contains(&wid(1)));
     }
@@ -989,6 +989,6 @@ mod tests {
         // No new moves or focus calls (only from initial setup which we cleared).
         assert!(platform.move_calls().is_empty());
         assert!(platform.focus_calls().is_empty());
-        assert_eq!(mgr.active_workspace().monocle.len(), 1);
+        assert_eq!(mgr.active_workspace().layout.len(), 1);
     }
 }
