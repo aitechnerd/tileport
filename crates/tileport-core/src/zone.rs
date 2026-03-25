@@ -360,15 +360,35 @@ impl ZoneLayout {
             None => return false,
         };
 
+        self.move_focused_to(target)
+    }
+
+    /// Swap the focused window with the primary zone's visible window.
+    ///
+    /// Returns `true` if a swap occurred, `false` if already primary or
+    /// either zone is empty.
+    pub fn promote_to_primary(&mut self) -> bool {
+        if self.focused_zone == self.primary_zone {
+            return false;
+        }
+
+        self.move_focused_to(self.primary_zone)
+    }
+
+    /// Move the visible window from the focused zone to `target`, updating focus.
+    ///
+    /// If both zones are occupied, swaps their visible windows.
+    /// If the target is empty, moves the window there.
+    /// Returns `true` if a move occurred.
+    fn move_focused_to(&mut self, target: usize) -> bool {
         let src = self.focused_zone;
 
-        // Swap visible windows (index 0) between zones.
         let src_win = self.zones[src].first().copied();
         let dst_win = self.zones[target].first().copied();
 
         match (src_win, dst_win) {
             (Some(sw), Some(dw)) => {
-                // Both zones have windows: swap them.
+                // Both zones have windows: swap visible windows.
                 self.zones[src][0] = dw;
                 self.zones[target][0] = sw;
             }
@@ -382,38 +402,6 @@ impl ZoneLayout {
 
         self.focused_zone = target;
         true
-    }
-
-    /// Swap the focused window with the primary zone's visible window.
-    ///
-    /// Returns `true` if a swap occurred, `false` if already primary or
-    /// either zone is empty.
-    pub fn promote_to_primary(&mut self) -> bool {
-        if self.focused_zone == self.primary_zone {
-            return false;
-        }
-
-        let src = self.focused_zone;
-        let dst = self.primary_zone;
-
-        let src_win = self.zones[src].first().copied();
-        let dst_win = self.zones[dst].first().copied();
-
-        match (src_win, dst_win) {
-            (Some(sw), Some(dw)) => {
-                self.zones[src][0] = dw;
-                self.zones[dst][0] = sw;
-                self.focused_zone = dst;
-                true
-            }
-            (Some(sw), None) => {
-                self.zones[src].remove(0);
-                self.zones[dst].push(sw);
-                self.focused_zone = dst;
-                true
-            }
-            _ => false,
-        }
     }
 
     /// Cycle focus to the next window within the current zone's overflow stack.

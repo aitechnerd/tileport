@@ -187,7 +187,7 @@ fn build_zone_node(config: &LayoutConfig, depth: usize) -> Option<ZoneNode> {
     }
 
     match config.layout_type.as_str() {
-        "columns" => {
+        "columns" | "rows" => {
             let ratios = if config.ratios.is_empty() {
                 vec![0.5, 0.5]
             } else {
@@ -195,35 +195,18 @@ fn build_zone_node(config: &LayoutConfig, depth: usize) -> Option<ZoneNode> {
             };
             let children: Vec<ZoneNode> = (0..ratios.len())
                 .map(|i| {
-                    let key = i.to_string();
-                    if let Some(split_config) = config.splits.get(&key) {
-                        build_zone_node(split_config, depth + 1)
-                            .unwrap_or(ZoneNode::Leaf)
-                    } else {
-                        ZoneNode::Leaf
-                    }
+                    config
+                        .splits
+                        .get(&i.to_string())
+                        .and_then(|split_config| build_zone_node(split_config, depth + 1))
+                        .unwrap_or(ZoneNode::Leaf)
                 })
                 .collect();
-            Some(ZoneNode::HSplit { ratios, children })
-        }
-        "rows" => {
-            let ratios = if config.ratios.is_empty() {
-                vec![0.5, 0.5]
+            if config.layout_type == "columns" {
+                Some(ZoneNode::HSplit { ratios, children })
             } else {
-                normalize_ratios(&config.ratios)
-            };
-            let children: Vec<ZoneNode> = (0..ratios.len())
-                .map(|i| {
-                    let key = i.to_string();
-                    if let Some(split_config) = config.splits.get(&key) {
-                        build_zone_node(split_config, depth + 1)
-                            .unwrap_or(ZoneNode::Leaf)
-                    } else {
-                        ZoneNode::Leaf
-                    }
-                })
-                .collect();
-            Some(ZoneNode::VSplit { ratios, children })
+                Some(ZoneNode::VSplit { ratios, children })
+            }
         }
         "monocle" => None,
         unknown => {

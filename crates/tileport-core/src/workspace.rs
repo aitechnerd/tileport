@@ -232,9 +232,8 @@ pub struct WorkspaceManager {
 }
 
 impl WorkspaceManager {
-    /// Create a workspace manager with 9 empty workspaces. Workspace 1 is active.
-    pub fn new() -> Self {
-        let workspaces: Vec<Workspace> = (1..=9).map(Workspace::new).collect();
+    /// Shared initializer: wraps a pre-built workspace vec with default screen/gaps.
+    fn from_workspaces(workspaces: Vec<Workspace>) -> Self {
         Self {
             workspaces,
             active_index: 0,
@@ -248,27 +247,22 @@ impl WorkspaceManager {
         }
     }
 
+    /// Create a workspace manager with 9 empty workspaces. Workspace 1 is active.
+    pub fn new() -> Self {
+        Self::from_workspaces((1..=9).map(Workspace::new).collect())
+    }
+
     /// Create a workspace manager with specific layouts for some workspaces.
     ///
     /// Workspaces not in the map get the default monocle layout.
     pub fn new_with_layouts(mut layouts: std::collections::HashMap<u8, WorkspaceLayout>) -> Self {
-        let workspaces: Vec<Workspace> = (1..=9u8)
+        let workspaces = (1..=9u8)
             .map(|id| match layouts.remove(&id) {
                 Some(layout) => Workspace::new_with_layout(id, layout),
                 None => Workspace::new(id),
             })
             .collect();
-        Self {
-            workspaces,
-            active_index: 0,
-            screen: Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 1920.0,
-                height: 1080.0,
-            },
-            gaps: Gaps::default(),
-        }
+        Self::from_workspaces(workspaces)
     }
 
     /// Update the screen dimensions and gap configuration.
@@ -543,30 +537,25 @@ impl WorkspaceManager {
     ///
     /// Used during shutdown to restore every window to an on-screen position.
     pub fn get_all_window_positions(&self) -> Vec<(WindowId, Rect)> {
+        let gapped = Rect {
+            x: self.screen.x + self.gaps.outer,
+            y: self.screen.y + self.gaps.outer,
+            width: self.screen.width - 2.0 * self.gaps.outer,
+            height: self.screen.height - 2.0 * self.gaps.outer,
+        };
+
         let mut positions = Vec::new();
 
         for ws in &self.workspaces {
             // All layout windows get the gapped screen rect (not offscreen).
             // During shutdown, every window should be visible.
             for id in ws.layout.windows() {
-                let rect = Rect {
-                    x: self.screen.x + self.gaps.outer,
-                    y: self.screen.y + self.gaps.outer,
-                    width: self.screen.width - 2.0 * self.gaps.outer,
-                    height: self.screen.height - 2.0 * self.gaps.outer,
-                };
-                positions.push((id, rect));
+                positions.push((id, gapped));
             }
 
             // Floating windows get their remembered rect, or the gapped rect.
             for (i, &id) in ws.floating_windows.iter().enumerate() {
-                let rect = ws.floating_rects[i].unwrap_or(Rect {
-                    x: self.screen.x + self.gaps.outer,
-                    y: self.screen.y + self.gaps.outer,
-                    width: self.screen.width - 2.0 * self.gaps.outer,
-                    height: self.screen.height - 2.0 * self.gaps.outer,
-                });
-                positions.push((id, rect));
+                positions.push((id, ws.floating_rects[i].unwrap_or(gapped)));
             }
         }
 
