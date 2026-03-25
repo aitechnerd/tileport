@@ -4,3 +4,4 @@ pub mod monocle;
 pub mod platform;
 pub mod types;
 pub mod workspace;
+pub mod zone;
