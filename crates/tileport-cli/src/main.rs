@@ -4,6 +4,7 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::Duration;
 use tileport_core::command::Command;
+use tileport_core::zone::Direction;
 
 #[derive(Parser)]
 #[command(name = "tileport", about = "CLI client for the tileport window manager")]
@@ -19,6 +20,13 @@ enum CliCommand {
         #[command(subcommand)]
         direction: FocusDirection,
     },
+    /// Move focused window to an adjacent zone
+    MoveToZone {
+        #[command(subcommand)]
+        direction: ZoneDirection,
+    },
+    /// Promote focused window to the primary zone
+    Promote,
     /// Switch to a workspace (1-9)
     Workspace {
         /// Workspace number (1-9)
@@ -45,6 +53,22 @@ enum FocusDirection {
     Next,
     /// Focus the previous window in the monocle carousel
     Prev,
+    /// Focus the window in the zone to the left
+    Left,
+    /// Focus the window in the zone to the right
+    Right,
+    /// Focus the window in the zone above
+    Up,
+    /// Focus the window in the zone below
+    Down,
+}
+
+#[derive(Subcommand)]
+enum ZoneDirection {
+    /// Move to the zone on the left
+    Left,
+    /// Move to the zone on the right
+    Right,
 }
 
 /// Convert CLI subcommand to the core Command enum.
@@ -53,7 +77,28 @@ fn to_command(cli_cmd: &CliCommand) -> Command {
         CliCommand::Focus { direction } => match direction {
             FocusDirection::Next => Command::FocusNext,
             FocusDirection::Prev => Command::FocusPrev,
+            FocusDirection::Left => Command::FocusDirection {
+                direction: Direction::Left,
+            },
+            FocusDirection::Right => Command::FocusDirection {
+                direction: Direction::Right,
+            },
+            FocusDirection::Up => Command::FocusDirection {
+                direction: Direction::Up,
+            },
+            FocusDirection::Down => Command::FocusDirection {
+                direction: Direction::Down,
+            },
         },
+        CliCommand::MoveToZone { direction } => match direction {
+            ZoneDirection::Left => Command::MoveToZone {
+                direction: Direction::Left,
+            },
+            ZoneDirection::Right => Command::MoveToZone {
+                direction: Direction::Right,
+            },
+        },
+        CliCommand::Promote => Command::PromoteToPrimary,
         CliCommand::Workspace { number } => Command::SwitchWorkspace { workspace: *number },
         CliCommand::MoveToWorkspace { number } => Command::MoveToWorkspace { workspace: *number },
         CliCommand::Float => Command::ToggleFloat,
@@ -178,6 +223,90 @@ mod tests {
     }
 
     #[test]
+    fn test_focus_left_to_command() {
+        let cmd = to_command(&CliCommand::Focus {
+            direction: FocusDirection::Left,
+        });
+        assert_eq!(
+            cmd,
+            Command::FocusDirection {
+                direction: Direction::Left,
+            }
+        );
+    }
+
+    #[test]
+    fn test_focus_right_to_command() {
+        let cmd = to_command(&CliCommand::Focus {
+            direction: FocusDirection::Right,
+        });
+        assert_eq!(
+            cmd,
+            Command::FocusDirection {
+                direction: Direction::Right,
+            }
+        );
+    }
+
+    #[test]
+    fn test_focus_up_to_command() {
+        let cmd = to_command(&CliCommand::Focus {
+            direction: FocusDirection::Up,
+        });
+        assert_eq!(
+            cmd,
+            Command::FocusDirection {
+                direction: Direction::Up,
+            }
+        );
+    }
+
+    #[test]
+    fn test_focus_down_to_command() {
+        let cmd = to_command(&CliCommand::Focus {
+            direction: FocusDirection::Down,
+        });
+        assert_eq!(
+            cmd,
+            Command::FocusDirection {
+                direction: Direction::Down,
+            }
+        );
+    }
+
+    #[test]
+    fn test_move_to_zone_left_to_command() {
+        let cmd = to_command(&CliCommand::MoveToZone {
+            direction: ZoneDirection::Left,
+        });
+        assert_eq!(
+            cmd,
+            Command::MoveToZone {
+                direction: Direction::Left,
+            }
+        );
+    }
+
+    #[test]
+    fn test_move_to_zone_right_to_command() {
+        let cmd = to_command(&CliCommand::MoveToZone {
+            direction: ZoneDirection::Right,
+        });
+        assert_eq!(
+            cmd,
+            Command::MoveToZone {
+                direction: Direction::Right,
+            }
+        );
+    }
+
+    #[test]
+    fn test_promote_to_command() {
+        let cmd = to_command(&CliCommand::Promote);
+        assert_eq!(cmd, Command::PromoteToPrimary);
+    }
+
+    #[test]
     fn test_workspace_to_command() {
         let cmd = to_command(&CliCommand::Workspace { number: 5 });
         assert_eq!(cmd, Command::SwitchWorkspace { workspace: 5 });
@@ -223,6 +352,43 @@ mod tests {
                 },
                 r#"{"command":"focus_prev"}"#,
             ),
+            (
+                CliCommand::Focus {
+                    direction: FocusDirection::Left,
+                },
+                r#"{"command":"focus_direction","direction":"left"}"#,
+            ),
+            (
+                CliCommand::Focus {
+                    direction: FocusDirection::Right,
+                },
+                r#"{"command":"focus_direction","direction":"right"}"#,
+            ),
+            (
+                CliCommand::Focus {
+                    direction: FocusDirection::Up,
+                },
+                r#"{"command":"focus_direction","direction":"up"}"#,
+            ),
+            (
+                CliCommand::Focus {
+                    direction: FocusDirection::Down,
+                },
+                r#"{"command":"focus_direction","direction":"down"}"#,
+            ),
+            (
+                CliCommand::MoveToZone {
+                    direction: ZoneDirection::Left,
+                },
+                r#"{"command":"move_to_zone","direction":"left"}"#,
+            ),
+            (
+                CliCommand::MoveToZone {
+                    direction: ZoneDirection::Right,
+                },
+                r#"{"command":"move_to_zone","direction":"right"}"#,
+            ),
+            (CliCommand::Promote, r#"{"command":"promote_to_primary"}"#),
             (
                 CliCommand::Workspace { number: 3 },
                 r#"{"command":"switch_workspace","workspace":3}"#,

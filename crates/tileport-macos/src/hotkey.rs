@@ -34,6 +34,7 @@ fn keycode_to_key_string(keycode: u16) -> Option<&'static str> {
         0x1A => Some("7"),  // KeyCode::ANSI_7
         0x1C => Some("8"),  // KeyCode::ANSI_8
         0x19 => Some("9"),  // KeyCode::ANSI_9
+        0x24 => Some("enter"), // KeyCode::Return
         _ => None,
     }
 }
@@ -158,6 +159,7 @@ mod tests {
         assert_eq!(keycode_to_key_string(0x03), Some("f"));
         assert_eq!(keycode_to_key_string(0x12), Some("1"));
         assert_eq!(keycode_to_key_string(0x19), Some("9"));
+        assert_eq!(keycode_to_key_string(0x24), Some("enter"));
         assert_eq!(keycode_to_key_string(0xFF), None);
     }
 

@@ -8,15 +8,43 @@ outer = 8
 # Keybindings (default: alt-based shortcuts)
 # If you override keybindings, you replace the entire set -- include all bindings you want.
 
+# Directional focus (zone-aware; falls back to next/prev in monocle)
 [[keybindings]]
 modifiers = ["alt"]
 key = "j"
-command = { command = "focus_next" }
+command = { command = "focus_direction", direction = "down" }
 
 [[keybindings]]
 modifiers = ["alt"]
 key = "k"
-command = { command = "focus_prev" }
+command = { command = "focus_direction", direction = "up" }
+
+[[keybindings]]
+modifiers = ["alt"]
+key = "h"
+command = { command = "focus_direction", direction = "left" }
+
+[[keybindings]]
+modifiers = ["alt"]
+key = "l"
+command = { command = "focus_direction", direction = "right" }
+
+# Move window to adjacent zone
+[[keybindings]]
+modifiers = ["alt", "shift"]
+key = "h"
+command = { command = "move_to_zone", direction = "left" }
+
+[[keybindings]]
+modifiers = ["alt", "shift"]
+key = "l"
+command = { command = "move_to_zone", direction = "right" }
+
+# Promote focused window to primary zone
+[[keybindings]]
+modifiers = ["alt"]
+key = "enter"
+command = { command = "promote_to_primary" }
 
 [[keybindings]]
 modifiers = ["alt"]
@@ -117,3 +145,27 @@ command = { command = "move_to_workspace", workspace = 8 }
 modifiers = ["alt", "shift"]
 key = "9"
 command = { command = "move_to_workspace", workspace = 9 }
+
+# Layout presets (uncomment and customize)
+# Built-in types: "columns", "rows", "monocle"
+#
+# [layouts.laptop-2col]
+# type = "columns"
+# ratios = [0.5, 0.5]
+#
+# [layouts.wide-3col]
+# type = "columns"
+# ratios = [0.25, 0.50, 0.25]
+#
+# [layouts.main-stack]
+# type = "columns"
+# ratios = [0.6, 0.4]
+# [layouts.main-stack.splits.1]
+# type = "rows"
+# ratios = [0.5, 0.5]
+#
+# Workspace assignments (uncomment to use)
+# [workspaces.1]
+# layout = "laptop-2col"
+# [workspaces.2]
+# layout = "wide-3col"

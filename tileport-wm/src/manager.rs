@@ -332,7 +332,12 @@ pub fn manager_loop<P: PlatformApi + WindowRegistry>(
     initial_windows: Vec<WindowInfo>,
     shutdown_flag: Arc<AtomicBool>,
 ) {
-    let mut workspace_mgr = WorkspaceManager::new();
+    let layouts = config.build_workspace_layouts();
+    let mut workspace_mgr = if layouts.is_empty() {
+        WorkspaceManager::new()
+    } else {
+        WorkspaceManager::new_with_layouts(layouts)
+    };
     workspace_mgr.set_screen_and_gaps(screen, config.gaps);
 
     // Add all initial windows to workspace 1.
